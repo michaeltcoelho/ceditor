@@ -14,6 +14,7 @@
 void clearEditorScreen();
 
 struct editorConfig {
+    int cx, cy; // cursor coordenades
     int screenrows;
     int screencols;
     struct termios originalTermAttrs;
@@ -84,12 +85,37 @@ char readKeysFromInput() {
     return c;
 }
 
+
+void editorMoveCursor(char key) {
+    switch (key) {
+      case 'a':
+        state.cx--;
+        break;
+      case 'd':
+        state.cx++;
+        break;
+      case 'w':
+        state.cy--;
+        break;
+      case 's':
+        state.cy++;
+        break;
+    }
+}
+
 void mapEditorKeys() {
     char c = readKeysFromInput();
     switch (c) {
         case CTRL_KEY('q'):
             clearEditorScreen();
             exit(0);
+            break;
+
+        case 'w':
+        case 's':
+        case 'a':
+        case 'd':
+            editorMoveCursor(c);
             break;
     }
 }
@@ -179,7 +205,11 @@ void refreshEditorScreen() {
 
     drawTildesRows(&buf);
 
-    appendToBuffer(&buf, "\x1b[H", 3);
+    char cursorBuf[32];
+    snprintf(cursorBuf, sizeof(cursorBuf), "\x1b[%d;%dH", state.cy + 1, state.cx + 1);
+    appendToBuffer(&buf, cursorBuf, strlen(cursorBuf));
+
+    //appendToBuffer(&buf, "\x1b[H", 3);
     appendToBuffer(&buf, "\x1b[?25h", 6);
 
     write(STDOUT_FILENO, buf.b, buf.len);
@@ -188,6 +218,10 @@ void refreshEditorScreen() {
 
 // initalize editor global state
 void initEditor() {
+    // initialy cursor coordenades
+    state.cx = 0;
+    state.cy = 0;
+
     if (getWindowSize(&state.screenrows, &state.screencols) == -1) die("getWindowSize");
 }
 
