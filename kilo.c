@@ -4,6 +4,7 @@
 #include <errno.h>
 #include <sys/ioctl.h>
 #include <stdio.h>
+#include <string.h>
 #include <termios.h>
 
 #define CTRL_KEY(k) ((k) & 0x1f)
@@ -16,7 +17,27 @@ struct editorConfig {
 
 struct editorConfig state;
 
+struct buffer {
+    char *b;
+    int len;
+};
+
+#define BUFFER_INIT {NULL, 0}
+
 void clearEditorScreen();
+
+void appendToBuffer(struct buffer *buf, const char *s, int len) {
+    char *new = realloc(buf->b, buf->len + len);
+
+    if (new == NULL) return;
+    memcpy(&new[buf->len], s, len);
+    buf->b = new;
+    buf->len += len;
+}
+
+void freeBuffer(struct buffer *buf) {
+    free(buf->b);
+}
 
 void die(const char *s) {
     clearEditorScreen();
@@ -78,27 +99,28 @@ int getCursorPosition(int *rows, int *cols) {
     // send cursor to right bottom of the screen
     if (write(STDOUT_FILENO, "\x1b[999C\x1b[999B", 12) != 12) return -1;
     // write out status report escape char
-    if(write(STDOUT_FILENO, "\x1b[6n]", 4) != 4) return -1;
+    if (write(STDOUT_FILENO, "\x1b[6n]", 4) != 4) return -1;
 
-    printf("\r\n");
+    char buffer[32];
+    unsigned int i = 0;
 
-    char c;
-    while (read(STDIN_FILENO, &c, 1) == 1) {
-        if (iscntrl(c)) {
-            printf("%d\r\n", c);
-        } else {
-            printf("%d ('%c')\r\n", c, c);
-        }
+    while (i < sizeof(buffer) - 1) {
+        if (read(STDIN_FILENO, &buffer[i], 1) != 1) break;
+        if (buffer[i] == 'R') break;
+        i++;
     }
 
-    readKeysFromInput();
+    buffer[i] = '\0';
 
-    return -1;
+    if (buffer[0] != '\x1b' || buffer[1] != '[') return -1;
+    if (sscanf(&buffer[2], "%d;%d", rows, cols) != 2) return -1;
+
+    return 0;
 }
 
 int getWindowSize(int *rows, int *cols) {
     struct winsize ws;
-    if (1 || ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0)  {
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0)  {
         return getCursorPosition(rows, cols);
     } else {
         *cols = ws.ws_col;
@@ -107,10 +129,17 @@ int getWindowSize(int *rows, int *cols) {
     }
 }
 
-void drawTildesRows() {
+void drawTildesRows(struct buffer *buf) {
     int y;
-    for (y = 0; y < 24; y++) {
-        write(STDOUT_FILENO, "~\r\n", 3);
+    for (y = 0; y < state.screenrows; y++) {
+        appendToBuffer(buf, "~", 1);
+
+        // clear lines as we write out new ones
+        appendToBuffer(buf, "\x1b[K", 3);
+
+        if (y < state.screenrows - 1) {
+            appendToBuffer(buf, "\r\n", 2);
+        }
     }
 }
 
@@ -120,12 +149,18 @@ void clearEditorScreen() {
 }
 
 void refreshEditorScreen() {
-    write(STDOUT_FILENO, "\x1b[2J", 4);
-    write(STDOUT_FILENO, "\x1b[H", 3);
+    struct buffer buf = BUFFER_INIT;
 
-    drawTildesRows();
+    appendToBuffer(&buf, "\x1b[?25l", 6);
+    appendToBuffer(&buf, "\x1b[H", 3);
 
-    write(STDOUT_FILENO, "\x1b[H", 3);
+    drawTildesRows(&buf);
+
+    appendToBuffer(&buf, "\x1b[H", 3);
+    appendToBuffer(&buf, "\x1b[?25h", 6);
+
+    write(STDOUT_FILENO, buf.b, buf.len);
+    freeBuffer(&buf);
 }
 
 // initalize editor global state
