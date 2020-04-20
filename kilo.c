@@ -8,6 +8,10 @@
 #include <termios.h>
 
 #define CTRL_KEY(k) ((k) & 0x1f)
+#define BUFFER_INIT {NULL, 0}
+#define KILO_VERSION "0.0.1"
+
+void clearEditorScreen();
 
 struct editorConfig {
     int screenrows;
@@ -21,10 +25,6 @@ struct buffer {
     char *b;
     int len;
 };
-
-#define BUFFER_INIT {NULL, 0}
-
-void clearEditorScreen();
 
 void appendToBuffer(struct buffer *buf, const char *s, int len) {
     char *new = realloc(buf->b, buf->len + len);
@@ -129,11 +129,34 @@ int getWindowSize(int *rows, int *cols) {
     }
 }
 
+
+int drawWelcomeMessage(int *row, struct buffer *buf) {
+    if (*row == state.screenrows / 3) {
+        char message[80];
+        int messageLen = snprintf(message, sizeof(message), "Kilo editor -- version %s", KILO_VERSION);
+        // truncate message in case screen is too tiny to fit message
+        if (messageLen > state.screencols)
+            messageLen = state.screencols;
+        // padding
+        int padding = (state.screencols - messageLen) / 2;
+        if (padding) {
+            appendToBuffer(buf, "~", 1);
+            padding--;
+        }
+        while (padding--) appendToBuffer(buf, " ", 1);
+        appendToBuffer(buf, message, messageLen);
+        return 0;
+    } else {
+        return -1;
+    }
+}
+
 void drawTildesRows(struct buffer *buf) {
     int y;
     for (y = 0; y < state.screenrows; y++) {
-        appendToBuffer(buf, "~", 1);
-
+        if (drawWelcomeMessage(&y, buf) == -1) {
+            appendToBuffer(buf, "~", 1);
+        }
         // clear lines as we write out new ones
         appendToBuffer(buf, "\x1b[K", 3);
 
