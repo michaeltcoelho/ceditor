@@ -14,13 +14,20 @@
 void clearEditorScreen();
 
 struct editorConfig {
-    int cx, cy; // cursor coordenades
+    int cx, cy; // cursor coordenates
     int screenrows;
     int screencols;
     struct termios originalTermAttrs;
 };
 
 struct editorConfig state;
+
+enum moveKeys {
+    MOVE_LEFT  = 'h',
+    MOVE_RIGHT = 'l',
+    MOVE_UP    = 'k',
+    MOVE_DOWN  = 'j'
+};
 
 struct buffer {
     char *b;
@@ -82,24 +89,48 @@ char readKeysFromInput() {
     while ((nread = read(STDIN_FILENO, &c, 1)) != 1) {
         if (nread == -1 && errno != EAGAIN) die("read");
     }
-    return c;
+
+    if (c == '\x1b') {
+        // read and map arrow keys to keys defined in moveKeys
+        char seq[3];
+
+        if (read(STDIN_FILENO, &seq[0], 1) != 1) return '\x1b';
+        if (read(STDIN_FILENO, &seq[1], 1) != 1) return '\x1b';
+
+        if (seq[0] == '[') {
+            switch (seq[1]) {
+                case 'A': return MOVE_UP;
+                case 'B': return MOVE_DOWN;
+                case 'C': return MOVE_RIGHT;
+                case 'D': return MOVE_LEFT;
+            }
+        }
+        return '\x1b';
+
+    } else {
+        return c;
+    }
 }
 
 
 void editorMoveCursor(char key) {
     switch (key) {
-      case 'a':
-        state.cx--;
-        break;
-      case 'd':
-        state.cx++;
-        break;
-      case 'w':
-        state.cy--;
-        break;
-      case 's':
-        state.cy++;
-        break;
+        case MOVE_LEFT:
+            if (state.cx != 0)
+                state.cx--;
+            break;
+        case MOVE_RIGHT:
+            if (state.cx != state.screencols - 1)
+                state.cx++;
+            break;
+        case MOVE_UP:
+            if (state.cy != 0)
+                state.cy--;
+            break;
+        case MOVE_DOWN:
+            if (state.cy != state.screenrows - 1)
+                state.cy++;
+            break;
     }
 }
 
@@ -111,10 +142,10 @@ void mapEditorKeys() {
             exit(0);
             break;
 
-        case 'w':
-        case 's':
-        case 'a':
-        case 'd':
+        case MOVE_LEFT:
+        case MOVE_RIGHT:
+        case MOVE_UP:
+        case MOVE_DOWN:
             editorMoveCursor(c);
             break;
     }
@@ -218,7 +249,7 @@ void refreshEditorScreen() {
 
 // initalize editor global state
 void initEditor() {
-    // initialy cursor coordenades
+    // initialy cursor coordenates
     state.cx = 0;
     state.cy = 0;
 
