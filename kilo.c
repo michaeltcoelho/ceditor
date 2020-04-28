@@ -1,3 +1,7 @@
+#define _DEFAULT_SOURCE
+#define _BSD_SOURCE
+#define _GNU_SOURCE
+
 #include <ctype.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -11,12 +15,18 @@
 #define BUFFER_INIT {NULL, 0}
 #define KILO_VERSION "0.0.1"
 
-void clearEditorScreen();
+typedef struct editorRow {
+    int size;
+    char *chars;
+} editorRow;
 
 struct editorConfig {
     int cx, cy; // cursor coordenates
     int screenrows;
     int screencols;
+    int numRows;
+    int rowOffset;
+    editorRow *row;
     struct termios originalTermAttrs;
 };
 
@@ -33,6 +43,8 @@ struct buffer {
     char *b;
     int len;
 };
+
+void clearEditorScreen();
 
 void appendToBuffer(struct buffer *buf, const char *s, int len) {
     char *new = realloc(buf->b, buf->len + len);
@@ -128,7 +140,7 @@ void editorMoveCursor(char key) {
                 state.cy--;
             break;
         case MOVE_DOWN:
-            if (state.cy != state.screenrows - 1)
+            if (state.cy < state.numRows)
                 state.cy++;
             break;
     }
@@ -186,9 +198,40 @@ int getWindowSize(int *rows, int *cols) {
     }
 }
 
+void editorAppendRow(char *s, size_t len) {
+    state.row = realloc(state.row, sizeof(editorRow) * (state.numRows + 1));
+
+    int at = state.numRows;
+
+    state.row[at].size = len;
+    state.row[at].chars = malloc(len+ 1);
+    memcpy(state.row[at].chars, s, len);
+    state.row[at].chars[len] = '\0';
+    state.numRows++;
+}
+
+// open a file and read it to memory
+void editorOpen(char *filename) {
+    FILE *fp = fopen(filename, "r");
+    if (!fp) die("fopen");
+
+    char *line = NULL;
+    size_t lineCap = 0;
+
+    ssize_t lineLen;
+
+    while ((lineLen = getline(&line, &lineCap, fp)) != -1) {
+        while (lineLen > 0 && (line[lineLen - 1] == '\n' || line[lineLen] == '\r'))
+            lineLen--;
+        editorAppendRow(line, lineLen);
+    }
+
+    free(line);
+    fclose(fp);
+}
 
 int drawWelcomeMessage(int *row, struct buffer *buf) {
-    if (*row == state.screenrows / 3) {
+    if (state.numRows == 0 && *row == state.screenrows / 3) {
         char message[80];
         int messageLen = snprintf(message, sizeof(message), "Kilo editor -- version %s", KILO_VERSION);
         // truncate message in case screen is too tiny to fit message
@@ -208,11 +251,27 @@ int drawWelcomeMessage(int *row, struct buffer *buf) {
     }
 }
 
-void drawTildesRows(struct buffer *buf) {
+void editorScroll() {
+    if (state.cy < state.rowOffset)
+        state.rowOffset = state.cy;
+    if (state.cy >= state.rowOffset + state.screenrows)
+        state.rowOffset = state.cy - state.screenrows + 1;
+}
+
+void drawRows(struct buffer *buf) {
     int y;
     for (y = 0; y < state.screenrows; y++) {
-        if (drawWelcomeMessage(&y, buf) == -1) {
-            appendToBuffer(buf, "~", 1);
+
+        int fileRow = y + state.rowOffset;
+
+        if (fileRow >= state.numRows) {
+            if (drawWelcomeMessage(&y, buf) == -1) {
+                appendToBuffer(buf, "~", 1);
+            }
+        } else {
+            int len = state.row[fileRow].size;
+            if (len > state.screencols) len = state.screencols;
+            appendToBuffer(buf, state.row[fileRow].chars, len);
         }
         // clear lines as we write out new ones
         appendToBuffer(buf, "\x1b[K", 3);
@@ -229,15 +288,17 @@ void clearEditorScreen() {
 }
 
 void refreshEditorScreen() {
+    editorScroll();
+
     struct buffer buf = BUFFER_INIT;
 
     appendToBuffer(&buf, "\x1b[?25l", 6);
     appendToBuffer(&buf, "\x1b[H", 3);
 
-    drawTildesRows(&buf);
+    drawRows(&buf);
 
     char cursorBuf[32];
-    snprintf(cursorBuf, sizeof(cursorBuf), "\x1b[%d;%dH", state.cy + 1, state.cx + 1);
+    snprintf(cursorBuf, sizeof(cursorBuf), "\x1b[%d;%dH", (state.cy - state.rowOffset) + 1, state.cx + 1);
     appendToBuffer(&buf, cursorBuf, strlen(cursorBuf));
 
     //appendToBuffer(&buf, "\x1b[H", 3);
@@ -252,13 +313,20 @@ void initEditor() {
     // initialy cursor coordenates
     state.cx = 0;
     state.cy = 0;
+    state.row = NULL;
+    state.rowOffset = 0;
+    state.numRows = 0;
 
     if (getWindowSize(&state.screenrows, &state.screencols) == -1) die("getWindowSize");
 }
 
-int main() {
+int main(int argc, char *argv[]) {
     enableCustomTerminalMode();
     initEditor();
+
+    if (argc >= 2) {
+        editorOpen(argv[1]);
+    }
 
     while (1) {
         refreshEditorScreen();
