@@ -26,6 +26,8 @@ struct editorConfig {
     int screencols;
     int numRows;
     int rowOffset;
+    int numColumns;
+    int columnsOffset;
     editorRow *row;
     struct termios originalTermAttrs;
 };
@@ -132,8 +134,7 @@ void editorMoveCursor(char key) {
                 state.cx--;
             break;
         case MOVE_RIGHT:
-            if (state.cx != state.screencols - 1)
-                state.cx++;
+            state.cx++;
             break;
         case MOVE_UP:
             if (state.cy != 0)
@@ -252,10 +253,16 @@ int drawWelcomeMessage(int *row, struct buffer *buf) {
 }
 
 void editorScroll() {
+    // vertically
     if (state.cy < state.rowOffset)
         state.rowOffset = state.cy;
     if (state.cy >= state.rowOffset + state.screenrows)
         state.rowOffset = state.cy - state.screenrows + 1;
+    // horizontally
+    if (state.cx < state.columnsOffset)
+        state.columnsOffset = state.cx;
+    if (state.cx >= state.columnsOffset + state.screencols)
+        state.columnsOffset = state.cx - state.screencols + 1;
 }
 
 void drawRows(struct buffer *buf) {
@@ -269,9 +276,11 @@ void drawRows(struct buffer *buf) {
                 appendToBuffer(buf, "~", 1);
             }
         } else {
-            int len = state.row[fileRow].size;
+            int len = state.row[fileRow].size - state.columnsOffset;
+            if (len < 0) len = 0;
             if (len > state.screencols) len = state.screencols;
-            appendToBuffer(buf, state.row[fileRow].chars, len);
+
+            appendToBuffer(buf, &state.row[fileRow].chars[state.columnsOffset], len);
         }
         // clear lines as we write out new ones
         appendToBuffer(buf, "\x1b[K", 3);
@@ -298,7 +307,7 @@ void refreshEditorScreen() {
     drawRows(&buf);
 
     char cursorBuf[32];
-    snprintf(cursorBuf, sizeof(cursorBuf), "\x1b[%d;%dH", (state.cy - state.rowOffset) + 1, state.cx + 1);
+    snprintf(cursorBuf, sizeof(cursorBuf), "\x1b[%d;%dH", (state.cy - state.rowOffset) + 1, (state.cx - state.columnsOffset) + 1);
     appendToBuffer(&buf, cursorBuf, strlen(cursorBuf));
 
     //appendToBuffer(&buf, "\x1b[H", 3);
